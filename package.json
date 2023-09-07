@@ -14,6 +14,7 @@
   "dependencies": {
     "axios": "^1.5.0",
     "cheerio": "1.0.0-rc.12",
+    "europa": "^6.0.0",
     "fs-extra": "^11.1.1",
     "install": "^0.13.0",
     "turndown": "^7.1.2",

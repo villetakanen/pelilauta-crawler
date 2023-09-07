@@ -1,12 +1,32 @@
-import axios, { Axios, AxiosError } from 'axios';
+import axios, { AxiosError } from 'axios';
 import cheerio from 'cheerio';
-import turndown from 'turndown';
 import fs from 'fs-extra';
 import * as path from 'path';
 import yargs from 'yargs';
+import TurndownService from 'turndown';
 
 const visitedPages: Set<string> = new Set();
 const imageDownloads: Set<string> = new Set();
+
+const maxPages = 1000000;
+
+// Ignore any files that contain these strings in their path.
+const ignorePatterns = [
+  'Admin',
+  'MyPages',
+  'PassWord',
+  'MyChanges',
+  'SandBox',
+  'Search',
+  '-revisions',
+  '-showcode',
+  '-raw',
+  'Spam',
+  'MySQL',
+  '-edit',
+  '-history',
+  '-backlinks',
+]
 
 const y = yargs(process.argv.slice(2))
 const argv = y
@@ -16,12 +36,35 @@ const argv = y
     demandOption: true,
     type: 'string',
   })
+  .option('root', {
+    alias: 'r',
+    describe: 'Root element for Markdown content conversion',
+    demandOption: false,
+    type: 'string',
+  })
+  .option('clear', {
+    alias: 'c',
+    describe: 'Clear the output directory before crawling',
+    demandOption: false,
+    type: 'boolean',
+  })
   .help()
   .alias('help', 'h').argv;
 
-const { domain } = await argv;
+const { domain, root, clear } = await argv;
 
-const turndownService = new turndown();
+function elementToMDX(htmlContent:string, rootElement = 'body') {
+  // Load the HTML content into cheerio.
+  const $ = cheerio.load(htmlContent);
+
+  // Get the root element contents as a html string.
+  const rootElementContent = $(rootElement).html();
+
+  if(!rootElementContent) return '';
+  
+  const turndownService = new TurndownService()
+  return turndownService.turndown(rootElementContent)
+}
 
 async function downloadAndSavePage(url: string, filename: string) {
   try {
@@ -35,15 +78,13 @@ async function downloadAndSavePage(url: string, filename: string) {
 
     stream.on('end', async () => {
       const htmlContent = Buffer.concat(chunks).toString('utf-8');
+      // Load the HTML content into cheerio.
       const $ = cheerio.load(htmlContent);
-      const markdownContent = turndownService.turndown($.html());
 
-      // Save the page as markdown with the title "index".
-      await fs.writeFile(filename, markdownContent);
-      console.log(`Downloaded and saved ${url} as ${filename}`);
-
-      // Extract image links and download images.
-      $('img').each(async (index, element) => {
+      // Extract image links and download images. 
+      const images = $('img');
+      for (let index = 0; index < images.length; index++) {
+        const element = images[index];
         const imgSrc = $(element).attr('src');
         if (imgSrc) {
           const imgFilename = path.basename(imgSrc);
@@ -55,12 +96,33 @@ async function downloadAndSavePage(url: string, filename: string) {
           // Update the image link in the markdown.
           const imgTag = $(element).prop('outerHTML');
           const updatedImgTag = imgTag.replace(imgSrc, imgFilename);
-          $('img').eq(index).replaceWith(updatedImgTag);
+          images.eq(index).replaceWith(updatedImgTag);
         }
-      });
+      }
+
+      // Extract links and update them to point to the local markdown files.
+      const links = $('a');
+      for (let index = 0; index < links.length; index++) {
+        const element = links[index];
+        const link = $(element).attr('href');
+        if (link && link.includes(domain)) {
+          const linkPath = extractLocalPathFromUrl(link);
+          if (linkPath) {
+            const linkFilename = pathSegmentToFilename(linkPath) + '.md';
+            const localLinkPath = path.join(path.dirname(filename), linkFilename);
+            // Update the link in the markdown.
+            const linkTag = $(element).prop('outerHTML');
+            const updatedLinkTag = linkTag.replace(link, linkFilename);
+            links.eq(index).replaceWith(updatedLinkTag);
+          }
+        }
+      }
+
+      console.log(`Downloaded and saved ${url} as ${filename}`);
+      const markdownContent = elementToMDX($.html(), root);
 
       // Save the modified markdown content.
-      await fs.writeFile(filename, $.html());
+      await fs.writeFile(filename, markdownContent);
     });
   } catch (error) {
     const axiosError = error as any as AxiosError
@@ -94,14 +156,32 @@ function extractLocalPathFromUrl(url: string): string | null {
   }
 }
 
+function toMekanismiURI (s: string): string {
+  if (s === null) return ''
+  // eslint-disable-next-line
+  const re = new RegExp('[^a-öA-Ö0-9]', 'gmu')
+  let r = s.replace(re, '-')
+  while (r.includes('--')) {
+    r = r.split('--').join('-')
+  }
+  // if the string ends with a -, remove it
+  if (r.endsWith('-')) {
+    r = r.slice(0, -1)
+  }
+  
+  return r
+}
+
 function pathSegmentToFilename(pathSegment: string): string {
   // Remove leading and trailing dashes and collapse consecutive dashes.
-  const cleanedPath = pathSegment.replace(/(^-+|-+$)/g, '').replace(/-+/g, '-');
+  //const cleanedPath = pathSegment.replace(/(^-+|-+$)/g, '').replace(/-+/g, '-');
   
   // Replace non-alphabetical characters with dashes.
-  let sanitizedPath = cleanedPath.replace(/[^a-zA-Z]/g, '-');
+  //let sanitizedPath = cleanedPath.replace(/[^a-zA-Z]/g, '-');
 
-  if (sanitizedPath.length === 0) {
+  let sanitizedPath = toMekanismiURI(pathSegment)
+
+  if (sanitizedPath.length === 0 || sanitizedPath === '-' ) {
     return 'index';
   }
 
@@ -112,11 +192,22 @@ function pathSegmentToFilename(pathSegment: string): string {
 }
 
 async function crawl(url: string, baseFolder: string) {
+  if (visitedPages.size >= maxPages) {
+    return;
+  }
+
   const pagePath = extractLocalPathFromUrl(url);
-  const pageFileName = pathSegmentToFilename(pagePath || '') + '.mdx';
+  const pageFileName = pathSegmentToFilename(pagePath || '') + '.md';
 
   if (!visitedPages.has(pageFileName)) {
     visitedPages.add(pageFileName);
+
+    // Ignore any files that contain the ignore patterns in their path.
+    if (ignorePatterns.some((pattern) => pageFileName.includes(pattern))) {
+      console.log(`Ignoring ${url}`);
+      return;
+    }
+
     const fileName = path.join(
       baseFolder,
       pageFileName
@@ -145,6 +236,10 @@ async function crawl(url: string, baseFolder: string) {
   }
 }
 
+// Clear the output directory if requested.
+if (clear) {
+  fs.emptyDirSync(path.join('results', domain));
+}
 // Create the output directory for the domain.
 fs.ensureDirSync(path.join('results', domain));
 
