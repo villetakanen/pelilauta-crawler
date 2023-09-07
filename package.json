@@ -1,0 +1,31 @@
+{
+  "name": "pelilauta-crawler",
+  "version": "0.0.1-alpha.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "crawl": "tsc && node webCrawler.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.5.0",
+    "cheerio": "1.0.0-rc.12",
+    "fs-extra": "^11.1.1",
+    "install": "^0.13.0",
+    "turndown": "^7.1.2",
+    "typescript": "^5.2.2",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@types/axios": "^0.14.0",
+    "@types/cheerio": "^0.22.32",
+    "@types/fs-extra": "^11.0.1",
+    "@types/node": "^20.5.9",
+    "@types/turndown": "^5.0.1",
+    "@types/yargs": "^17.0.24"
+  }
+}
