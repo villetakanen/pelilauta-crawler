@@ -63,7 +63,14 @@ function elementToMDX(htmlContent:string, rootElement = 'body') {
   if(!rootElementContent) return '';
   
   const turndownService = new TurndownService()
-  return turndownService.turndown(rootElementContent)
+
+  const rawMD = turndownService.turndown(rootElementContent)
+
+  // move any ![image](url "alt text") to ![alt text](url)
+  const re = new RegExp('!\\[([^\\]]*)\\]\\(([^\\)]*)\\s"([^\\)]*)"\\)', 'gmu')
+  const md = rawMD.replace(re, '![$1]($2)')
+
+  return md
 }
 
 async function downloadAndSavePage(url: string, filename: string) {
@@ -93,10 +100,20 @@ async function downloadAndSavePage(url: string, filename: string) {
             await downloadImage(imgSrc, localImgPath);
             imageDownloads.add(imgSrc);
           }
-          // Update the image link in the markdown.
+          // Update the image link in the html.
           const imgTag = $(element).prop('outerHTML');
           const updatedImgTag = imgTag.replace(imgSrc, imgFilename);
           images.eq(index).replaceWith(updatedImgTag);
+
+          // if the image has classes, we want to add them as text after the image
+          // f.ex. <img class="classname"> -> <img class="classname">{.classname}
+          const imgClasses = $(element).attr('class')
+          if (imgClasses) {
+            const imgClassList = imgClasses.split(' ')
+            const imgClassText = imgClassList.map(c => `{.${c}}`).join('')
+            const imgClassTextTag = `<p>${imgClassText}</p>`
+            images.eq(index).after(imgClassTextTag)
+          }
         }
       }
 
